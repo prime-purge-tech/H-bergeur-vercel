@@ -566,20 +566,7 @@ tr:last-child td{border-bottom:none;}
       <h1 id="authTitle">Content de te revoir</h1>
       <p class="sub" id="authSub">Connecte-toi pour ouvrir la caisse</p>
 
-      <div id="codeGateBlock" class="hidden">
-        <div class="auth-field">
-          <span class="icon">🔑</span>
-          <input id="inviteCode" type="password" placeholder="Code secret de l'équipe" autocomplete="off">
-        </div>
-        <div class="auth-error" id="codeError"></div>
-        <button class="auth-submit" id="verifyCodeBtn" type="button">Valider le code</button>
-      </div>
-
       <div id="signupFormBlock">
-        <div id="ownerCodeField" class="auth-field hidden">
-          <span class="icon">🔑</span>
-          <input id="newOwnerCode" type="password" placeholder="Crée un code secret pour ton équipe" autocomplete="off">
-        </div>
         <div id="signupNameField" class="auth-field hidden">
           <span class="icon">👤</span>
           <input id="authDisplayName" type="text" placeholder="Ton prénom">
@@ -767,18 +754,6 @@ tr:last-child td{border-bottom:none;}
         <p class="field hint" style="margin-top:14px;">Un vrai SMS automatique demande un service payant relié à un serveur — indisponible ici. Ce bouton ouvre WhatsApp avec le message déjà prêt.</p>
         <button class="whatsapp-btn" id="sendWhatsappBtn" style="margin-top:6px;">Envoyer l'alerte sur WhatsApp</button>
       </div>
-
-      <div id="ownerCodeCard" class="hidden">
-        <div class="section-title">Code secret de l'équipe</div>
-        <div class="card">
-          <p class="field hint" style="margin:0 0 10px;">Ce code est demandé à toute personne qui veut créer un compte. Donne-le uniquement aux gens de confiance. 3 essais faux = 1 heure d'attente.</p>
-          <div class="field">
-            <label for="newTeamCode">Nouveau code secret</label>
-            <input id="newTeamCode" type="password" placeholder="Ex : dk7boutique" autocomplete="off">
-          </div>
-          <button class="secondary" id="changeCodeBtn">Mettre à jour le code</button>
-        </div>
-      </div>
     </section>
 
     <!-- ABONNEMENT -->
@@ -811,7 +786,7 @@ tr:last-child td{border-bottom:none;}
 let products = [];
 let sales = [];
 let accounts = [];
-let settings = { alertPhone:'', lowStockThreshold:5, ownerCodeHash:'' };
+let settings = { alertPhone:'', lowStockThreshold:5 };
 let currentUser = null; // {username, displayName}
 const CUR = 'FCFA';
 
@@ -825,36 +800,56 @@ function showToast(msg){
   setTimeout(()=>t.classList.remove('show'), 2000);
 }
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
-// Obfuscation simple, PAS un vrai chiffrement sécurisé — il n'y a pas de serveur derrière.
+// Obfuscation simple, PAS un vrai chiffrement sécurisé.
 function obfuscate(str){ return btoa(unescape(encodeURIComponent(str + '::kaisse'))); }
 
 // ---------- STORAGE ----------
-async function loadData(){
-  try{ const r = await window.storage.get('products', true); products = r ? JSON.parse(r.value) : []; }catch(e){ products = []; }
-  try{ const r = await window.storage.get('sales', true); sales = r ? JSON.parse(r.value) : []; }catch(e){ sales = []; }
-  try{ const r = await window.storage.get('accounts', true); accounts = r ? JSON.parse(r.value) : []; }catch(e){ accounts = []; }
-  try{ const r = await window.storage.get('settings', true); settings = r ? JSON.parse(r.value) : { alertPhone:'', lowStockThreshold:5, ownerCodeHash:'' }; }catch(e){ settings = { alertPhone:'', lowStockThreshold:5, ownerCodeHash:'' }; }
-}
-async function saveProducts(){ try{ await window.storage.set('products', JSON.stringify(products), true); }catch(e){ showToast("Erreur d'enregistrement du stock"); } }
-async function saveSales(){ try{ await window.storage.set('sales', JSON.stringify(sales), true); }catch(e){ showToast("Erreur d'enregistrement de la vente"); } }
-async function saveAccounts(){ try{ await window.storage.set('accounts', JSON.stringify(accounts), true); }catch(e){ showToast("Erreur d'enregistrement des comptes"); } }
-async function saveSettings(){ try{ await window.storage.set('settings', JSON.stringify(settings), true); }catch(e){ showToast("Erreur d'enregistrement des réglages"); } }
+// Remplace l'ancien window.storage (qui n'existe que dans les Artifacts Claude)
+// par de vrais appels à l'API /api/data, elle-même connectée à Vercel KV.
+// Tout le monde (toute la boutique) partage les mêmes données.
+const API_BASE = '/api/data';
 
-async function saveSession(username){
-  try{ await window.storage.set('session', username, false); }catch(e){}
+async function apiGet(key){
+  try{
+    const res = await fetch(`${API_BASE}?key=${encodeURIComponent(key)}`);
+    if(!res.ok) throw new Error('bad response');
+    const json = await res.json();
+    return json.value;
+  }catch(e){
+    console.error('Erreur de chargement', key, e);
+    return null;
+  }
 }
-async function loadSession(){
-  try{ const r = await window.storage.get('session', false); return r ? r.value : null; }catch(e){ return null; }
+async function apiSet(key, value){
+  try{
+    const res = await fetch(API_BASE + `?key=${encodeURIComponent(key)}`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ value })
+    });
+    if(!res.ok) throw new Error('bad response');
+  }catch(e){
+    console.error('Erreur d\'enregistrement', key, e);
+    showToast("Erreur de connexion au serveur — vérifie ta connexion");
+  }
 }
-async function clearSession(){
-  try{ await window.storage.set('session', '', false); }catch(e){}
+
+async function loadData(){
+  products = (await apiGet('products')) || [];
+  sales = (await apiGet('sales')) || [];
+  accounts = (await apiGet('accounts')) || [];
+  settings = (await apiGet('settings')) || { alertPhone:'', lowStockThreshold:5 };
 }
-async function loadCodeAttempts(){
-  try{ const r = await window.storage.get('codeAttempts', false); return r ? JSON.parse(r.value) : {count:0, lockUntil:0}; }catch(e){ return {count:0, lockUntil:0}; }
-}
-async function saveCodeAttempts(data){
-  try{ await window.storage.set('codeAttempts', JSON.stringify(data), false); }catch(e){}
-}
+async function saveProducts(){ await apiSet('products', products); }
+async function saveSales(){ await apiSet('sales', sales); }
+async function saveAccounts(){ await apiSet('accounts', accounts); }
+async function saveSettings(){ await apiSet('settings', settings); }
+
+// La session de connexion reste locale à l'appareil (comme avant, elle n'a
+// jamais eu besoin d'être partagée) : simple localStorage du navigateur.
+function saveSession(username){ try{ localStorage.setItem('kaisse_session', username); }catch(e){} }
+function loadSession(){ try{ return localStorage.getItem('kaisse_session'); }catch(e){ return null; } }
+function clearSession(){ try{ localStorage.removeItem('kaisse_session'); }catch(e){} }
 
 // ---------- YEUX ANIMÉS ----------
 (function setupEyes(){
@@ -868,7 +863,7 @@ async function saveCodeAttempts(data){
       const cx = rect.left + rect.width/2;
       const cy = rect.top + rect.height/2;
       const angle = Math.atan2(clientY - cy, clientX - cx);
-      const radius = rect.width/2 - 15; // limite pour que la pupille reste dans l'oeil
+      const radius = rect.width/2 - 15;
       const dist = Math.min(radius, Math.hypot(clientX-cx, clientY-cy)/6 + radius*0.4);
       const x = Math.cos(angle) * dist;
       const y = Math.sin(angle) * dist;
@@ -880,7 +875,6 @@ async function saveCodeAttempts(data){
     if(e.touches && e.touches[0]) movePupils(e.touches[0].clientX, e.touches[0].clientY);
   }, { passive:true });
 
-  // Petit clignement naturel toutes les quelques secondes
   function scheduleBlink(){
     const delay = 2500 + Math.random()*3000;
     setTimeout(()=>{
@@ -893,7 +887,6 @@ async function saveCodeAttempts(data){
   }
   scheduleBlink();
 
-  // Les yeux suivent aussi ce qui est tapé dans le nom d'utilisateur (petit mouvement)
   document.getElementById('authUsername').addEventListener('input', (e)=>{
     if(passwordFocused) return;
     const len = e.target.value.length;
@@ -903,7 +896,6 @@ async function saveCodeAttempts(data){
     });
   });
 
-  // Les yeux se ferment pendant la saisie du mot de passe, comme sur la vidéo
   document.getElementById('authPassword').addEventListener('focus', ()=>{
     passwordFocused = true;
     eyes.forEach(eye=> eye.classList.add('closed'));
@@ -916,41 +908,19 @@ async function saveCodeAttempts(data){
 
 // ---------- AUTH ----------
 let authMode = 'login';
-let codeUnlocked = false;
-
-async function updateCodeGateAvailability(){
-  const gateVisible = !document.getElementById('codeGateBlock').classList.contains('hidden');
-  if(!gateVisible) return;
-  const data = await loadCodeAttempts();
-  const now = Date.now();
-  const verifyBtn = document.getElementById('verifyCodeBtn');
-  const codeError = document.getElementById('codeError');
-  if(data.lockUntil && now < data.lockUntil){
-    const mins = Math.ceil((data.lockUntil - now)/60000);
-    verifyBtn.disabled = true;
-    codeError.textContent = `Trop d'essais. Réessaie dans ${mins} min.`;
-  } else {
-    verifyBtn.disabled = false;
-  }
-}
 
 function setAuthMode(mode){
   authMode = mode;
-  codeUnlocked = false;
   const isSignup = mode === 'signup';
   const isBootstrap = accounts.length === 0;
-  const needsGate = isSignup && !isBootstrap;
 
-  document.getElementById('codeGateBlock').classList.toggle('hidden', !needsGate);
-  document.getElementById('signupFormBlock').classList.toggle('hidden', needsGate);
-  document.getElementById('ownerCodeField').classList.toggle('hidden', !(isSignup && isBootstrap));
   document.getElementById('signupNameField').classList.toggle('hidden', !isSignup);
 
   document.getElementById('authTitle').textContent = isSignup
-    ? (isBootstrap ? 'Configure ta boutique' : 'Rejoindre l\'équipe')
+    ? (isBootstrap ? 'Configure ta boutique' : 'Créer ton compte')
     : 'Content de te revoir';
   document.getElementById('authSub').textContent = isSignup
-    ? (isBootstrap ? 'Tu es le premier : crée le compte propriétaire' : (needsGate ? 'Demande le code secret au propriétaire' : 'Code validé — crée ton compte'))
+    ? (isBootstrap ? 'Tu es le premier : crée le compte propriétaire' : 'Pour enregistrer tes ventes à ton nom')
     : 'Connecte-toi pour ouvrir la caisse';
   document.getElementById('authSubmitBtn').textContent = isSignup ? 'Créer mon compte' : 'Se connecter';
   document.getElementById('authSwitch').innerHTML = isSignup
@@ -959,40 +929,8 @@ function setAuthMode(mode){
   document.getElementById('authSwitchLink').addEventListener('click', ()=> setAuthMode(isSignup ? 'login' : 'signup'));
 
   document.getElementById('authError').textContent = '';
-  document.getElementById('codeError').textContent = '';
-  document.getElementById('inviteCode').value = '';
-  updateCodeGateAvailability();
 }
 document.getElementById('authSwitchLink').addEventListener('click', ()=> setAuthMode('signup'));
-
-document.getElementById('verifyCodeBtn').addEventListener('click', async ()=>{
-  const data = await loadCodeAttempts();
-  const now = Date.now();
-  const codeError = document.getElementById('codeError');
-  if(data.lockUntil && now < data.lockUntil){ updateCodeGateAvailability(); return; }
-
-  const entered = document.getElementById('inviteCode').value;
-  if(!entered){ codeError.textContent = 'Entre le code'; return; }
-  if(!settings.ownerCodeHash){ codeError.textContent = "Le propriétaire n'a pas encore configuré de code."; return; }
-
-  if(obfuscate(entered) === settings.ownerCodeHash){
-    codeUnlocked = true;
-    await saveCodeAttempts({count:0, lockUntil:0});
-    document.getElementById('codeGateBlock').classList.add('hidden');
-    document.getElementById('signupFormBlock').classList.remove('hidden');
-    document.getElementById('authSub').textContent = 'Code validé — crée maintenant ton compte';
-  } else {
-    const count = (data.count || 0) + 1;
-    if(count >= 3){
-      await saveCodeAttempts({count:0, lockUntil: now + 60*60*1000});
-      codeError.textContent = "Code incorrect. Trop d'essais : réessaie dans 1 heure.";
-      document.getElementById('verifyCodeBtn').disabled = true;
-    } else {
-      await saveCodeAttempts({count, lockUntil:0});
-      codeError.textContent = `Code incorrect (${count}/3 essais).`;
-    }
-  }
-});
 
 document.getElementById('authSubmitBtn').addEventListener('click', async ()=>{
   const username = document.getElementById('authUsername').value.trim().toLowerCase();
@@ -1004,17 +942,9 @@ document.getElementById('authSubmitBtn').addEventListener('click', async ()=>{
 
   if(authMode === 'signup'){
     const isBootstrap = accounts.length === 0;
-    if(!isBootstrap && !codeUnlocked){ errorEl.textContent = "Valide d'abord le code secret de l'équipe"; return; }
     const displayName = document.getElementById('authDisplayName').value.trim();
     if(!displayName){ errorEl.textContent = 'Indique ton prénom'; return; }
     if(accounts.find(a=>a.username===username)){ errorEl.textContent = 'Ce nom d\'utilisateur existe déjà'; return; }
-
-    if(isBootstrap){
-      const newCode = document.getElementById('newOwnerCode').value;
-      if(!newCode || newCode.length < 4){ errorEl.textContent = 'Choisis un code secret d\'au moins 4 caractères'; return; }
-      settings.ownerCodeHash = obfuscate(newCode);
-      await saveSettings();
-    }
 
     const account = { id: uid(), username, displayName, passwordHash: obfuscate(password), role: isBootstrap ? 'proprietaire' : 'employe' };
     accounts.push(account);
@@ -1032,7 +962,7 @@ document.getElementById('authSubmitBtn').addEventListener('click', async ()=>{
 
 async function loginAs(account){
   currentUser = account;
-  await saveSession(account.username);
+  saveSession(account.username);
   showAppScreen();
   showToast(`Bienvenue ${account.displayName}`);
 }
@@ -1044,22 +974,20 @@ function showAuthScreen(){
   document.getElementById('authUsername').value = '';
   document.getElementById('authPassword').value = '';
   document.getElementById('authDisplayName').value = '';
-  document.getElementById('newOwnerCode').value = '';
 }
 function showAppScreen(){
   document.getElementById('authScreen').classList.add('hidden');
   document.getElementById('appRoot').classList.remove('hidden');
   document.getElementById('helpFab').classList.remove('hidden');
   document.getElementById('currentUserLabel').textContent = currentUser.displayName;
-  document.getElementById('ownerCodeCard').classList.toggle('hidden', currentUser.role !== 'proprietaire');
   renderDashboard();
   renderStock();
   renderVente();
   renderRapport();
   renderEquipe();
 }
-document.getElementById('logoutBtn').addEventListener('click', async ()=>{
-  await clearSession();
+document.getElementById('logoutBtn').addEventListener('click', ()=>{
+  clearSession();
   currentUser = null;
   setAuthMode('login');
   showAuthScreen();
@@ -1485,24 +1413,13 @@ document.getElementById('clearAccountsBtn').addEventListener('click', async ()=>
   if(accounts.length===0){ showToast('La liste est déjà vide'); return; }
   if(confirm('Vider tous les comptes ? Tout le monde, y compris toi, devra recréer un compte. Irréversible.')){
     accounts = [];
-    settings.ownerCodeHash = '';
     await saveAccounts();
-    await saveSettings();
-    await clearSession();
+    clearSession();
     currentUser = null;
     setAuthMode('signup');
     showAuthScreen();
     showToast('Comptes réinitialisés — crée un nouveau compte');
   }
-});
-
-document.getElementById('changeCodeBtn').addEventListener('click', async ()=>{
-  const newCode = document.getElementById('newTeamCode').value;
-  if(!newCode || newCode.length < 4){ showToast('Le code doit faire au moins 4 caractères'); return; }
-  settings.ownerCodeHash = obfuscate(newCode);
-  await saveSettings();
-  document.getElementById('newTeamCode').value = '';
-  showToast('Code secret de l\'équipe mis à jour');
 });
 
 document.getElementById('saveSettingsBtn').addEventListener('click', async ()=>{
@@ -1560,7 +1477,7 @@ document.getElementById('helpFab').addEventListener('click', async ()=>{
 (async function init(){
   await loadData();
   setAuthMode('login');
-  const savedUsername = await loadSession();
+  const savedUsername = loadSession();
   if(savedUsername){
     const account = accounts.find(a=>a.username===savedUsername);
     if(account){
