@@ -1,9 +1,0 @@
-{
-  "name": "hebergeur",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "@vercel/blob": "^2.8.0",
-    "fflate": "^0.8.2"
-  }
-}
