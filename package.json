@@ -1,14 +1,13 @@
 {
-  "name": "kaisse-telegram-bot",
+  "name": "kaisse-vercel",
   "version": "1.0.0",
-  "description": "Bot Telegram pour gerer les demandes de compte, les abonnements et les admins de Kaisse",
-  "main": "bot.js",
-  "type": "commonjs",
+  "private": true,
+  "description": "Kaisse — appli de gestion de stock/caisse + bot Telegram de comptes/abonnements, prêt pour Vercel",
   "scripts": {
-    "start": "node bot.js"
+    "dev": "vercel dev"
   },
   "dependencies": {
+    "@vercel/kv": "^1.0.1",
     "node-telegram-bot-api": "^0.66.0"
   }
 }
-
