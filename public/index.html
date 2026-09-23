@@ -800,56 +800,30 @@ function showToast(msg){
   setTimeout(()=>t.classList.remove('show'), 2000);
 }
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
-// Obfuscation simple, PAS un vrai chiffrement sécurisé.
+// Obfuscation simple, PAS un vrai chiffrement sécurisé — il n'y a pas de serveur derrière.
 function obfuscate(str){ return btoa(unescape(encodeURIComponent(str + '::kaisse'))); }
 
 // ---------- STORAGE ----------
-// Remplace l'ancien window.storage (qui n'existe que dans les Artifacts Claude)
-// par de vrais appels à l'API /api/data, elle-même connectée à Vercel KV.
-// Tout le monde (toute la boutique) partage les mêmes données.
-const API_BASE = '/api/data';
-
-async function apiGet(key){
-  try{
-    const res = await fetch(`${API_BASE}?key=${encodeURIComponent(key)}`);
-    if(!res.ok) throw new Error('bad response');
-    const json = await res.json();
-    return json.value;
-  }catch(e){
-    console.error('Erreur de chargement', key, e);
-    return null;
-  }
-}
-async function apiSet(key, value){
-  try{
-    const res = await fetch(API_BASE + `?key=${encodeURIComponent(key)}`, {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json' },
-      body: JSON.stringify({ value })
-    });
-    if(!res.ok) throw new Error('bad response');
-  }catch(e){
-    console.error('Erreur d\'enregistrement', key, e);
-    showToast("Erreur de connexion au serveur — vérifie ta connexion");
-  }
-}
-
 async function loadData(){
-  products = (await apiGet('products')) || [];
-  sales = (await apiGet('sales')) || [];
-  accounts = (await apiGet('accounts')) || [];
-  settings = (await apiGet('settings')) || { alertPhone:'', lowStockThreshold:5 };
+  try{ const r = await window.storage.get('products', true); products = r ? JSON.parse(r.value) : []; }catch(e){ products = []; }
+  try{ const r = await window.storage.get('sales', true); sales = r ? JSON.parse(r.value) : []; }catch(e){ sales = []; }
+  try{ const r = await window.storage.get('accounts', true); accounts = r ? JSON.parse(r.value) : []; }catch(e){ accounts = []; }
+  try{ const r = await window.storage.get('settings', true); settings = r ? JSON.parse(r.value) : { alertPhone:'', lowStockThreshold:5 }; }catch(e){ settings = { alertPhone:'', lowStockThreshold:5 }; }
 }
-async function saveProducts(){ await apiSet('products', products); }
-async function saveSales(){ await apiSet('sales', sales); }
-async function saveAccounts(){ await apiSet('accounts', accounts); }
-async function saveSettings(){ await apiSet('settings', settings); }
+async function saveProducts(){ try{ await window.storage.set('products', JSON.stringify(products), true); }catch(e){ showToast("Erreur d'enregistrement du stock"); } }
+async function saveSales(){ try{ await window.storage.set('sales', JSON.stringify(sales), true); }catch(e){ showToast("Erreur d'enregistrement de la vente"); } }
+async function saveAccounts(){ try{ await window.storage.set('accounts', JSON.stringify(accounts), true); }catch(e){ showToast("Erreur d'enregistrement des comptes"); } }
+async function saveSettings(){ try{ await window.storage.set('settings', JSON.stringify(settings), true); }catch(e){ showToast("Erreur d'enregistrement des réglages"); } }
 
-// La session de connexion reste locale à l'appareil (comme avant, elle n'a
-// jamais eu besoin d'être partagée) : simple localStorage du navigateur.
-function saveSession(username){ try{ localStorage.setItem('kaisse_session', username); }catch(e){} }
-function loadSession(){ try{ return localStorage.getItem('kaisse_session'); }catch(e){ return null; } }
-function clearSession(){ try{ localStorage.removeItem('kaisse_session'); }catch(e){} }
+async function saveSession(username){
+  try{ await window.storage.set('session', username, false); }catch(e){}
+}
+async function loadSession(){
+  try{ const r = await window.storage.get('session', false); return r ? r.value : null; }catch(e){ return null; }
+}
+async function clearSession(){
+  try{ await window.storage.set('session', '', false); }catch(e){}
+}
 
 // ---------- YEUX ANIMÉS ----------
 (function setupEyes(){
@@ -863,7 +837,7 @@ function clearSession(){ try{ localStorage.removeItem('kaisse_session'); }catch(
       const cx = rect.left + rect.width/2;
       const cy = rect.top + rect.height/2;
       const angle = Math.atan2(clientY - cy, clientX - cx);
-      const radius = rect.width/2 - 15;
+      const radius = rect.width/2 - 15; // limite pour que la pupille reste dans l'oeil
       const dist = Math.min(radius, Math.hypot(clientX-cx, clientY-cy)/6 + radius*0.4);
       const x = Math.cos(angle) * dist;
       const y = Math.sin(angle) * dist;
@@ -875,6 +849,7 @@ function clearSession(){ try{ localStorage.removeItem('kaisse_session'); }catch(
     if(e.touches && e.touches[0]) movePupils(e.touches[0].clientX, e.touches[0].clientY);
   }, { passive:true });
 
+  // Petit clignement naturel toutes les quelques secondes
   function scheduleBlink(){
     const delay = 2500 + Math.random()*3000;
     setTimeout(()=>{
@@ -887,6 +862,7 @@ function clearSession(){ try{ localStorage.removeItem('kaisse_session'); }catch(
   }
   scheduleBlink();
 
+  // Les yeux suivent aussi ce qui est tapé dans le nom d'utilisateur (petit mouvement)
   document.getElementById('authUsername').addEventListener('input', (e)=>{
     if(passwordFocused) return;
     const len = e.target.value.length;
@@ -896,6 +872,7 @@ function clearSession(){ try{ localStorage.removeItem('kaisse_session'); }catch(
     });
   });
 
+  // Les yeux se ferment pendant la saisie du mot de passe, comme sur la vidéo
   document.getElementById('authPassword').addEventListener('focus', ()=>{
     passwordFocused = true;
     eyes.forEach(eye=> eye.classList.add('closed'));
@@ -962,7 +939,7 @@ document.getElementById('authSubmitBtn').addEventListener('click', async ()=>{
 
 async function loginAs(account){
   currentUser = account;
-  saveSession(account.username);
+  await saveSession(account.username);
   showAppScreen();
   showToast(`Bienvenue ${account.displayName}`);
 }
@@ -986,8 +963,8 @@ function showAppScreen(){
   renderRapport();
   renderEquipe();
 }
-document.getElementById('logoutBtn').addEventListener('click', ()=>{
-  clearSession();
+document.getElementById('logoutBtn').addEventListener('click', async ()=>{
+  await clearSession();
   currentUser = null;
   setAuthMode('login');
   showAuthScreen();
@@ -1414,7 +1391,7 @@ document.getElementById('clearAccountsBtn').addEventListener('click', async ()=>
   if(confirm('Vider tous les comptes ? Tout le monde, y compris toi, devra recréer un compte. Irréversible.')){
     accounts = [];
     await saveAccounts();
-    clearSession();
+    await clearSession();
     currentUser = null;
     setAuthMode('signup');
     showAuthScreen();
@@ -1477,7 +1454,7 @@ document.getElementById('helpFab').addEventListener('click', async ()=>{
 (async function init(){
   await loadData();
   setAuthMode('login');
-  const savedUsername = loadSession();
+  const savedUsername = await loadSession();
   if(savedUsername){
     const account = accounts.find(a=>a.username===savedUsername);
     if(account){
